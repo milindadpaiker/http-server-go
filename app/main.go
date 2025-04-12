@@ -3,10 +3,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -14,6 +17,10 @@ import (
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
+	
+	RootDir = flag.String("directory", ".", "root directory to serve files from")
+	flag.Parse()
+	fmt.Println("Root directory set to", *RootDir)
 	fmt.Println("Starting http server...")
 
 	l, err := net.Listen("tcp", "0.0.0.0:4221")
@@ -36,9 +43,9 @@ func main() {
 
 func handleConnection(conn net.Conn) {
 	status := "200 OK"
-	contentLength := 0
+	var contentLength int64
 	contentType := "text/plain"
-	body := ""
+	var body []byte
 	defer conn.Close()
 	
 	//Read client request
@@ -53,28 +60,40 @@ func handleConnection(conn net.Conn) {
 		status = HTTPStatus[200]
 	}else if strings.HasPrefix(req.Path, "/echo/"){
 		echoResponse := strings.SplitN(req.Path, "/", 3)
-		contentLength = len(echoResponse[2])
-		body = echoResponse[2]
+		contentLength = int64(len(echoResponse[2]))
+		body = []byte(echoResponse[2])
 	}else if strings.HasPrefix(req.Path, "/files/"){
 		fileReq := strings.SplitN(req.Path, "/", 3)
-		fileName := len(fileReq[2])
-		fmt.Println("Requesting file: ", fileName)
-		//return 404 if file does not exist, 
-		if true {
-
+		fileName := fileReq[2]
+		fullPath := filepath.Join(*RootDir, fileName)
+		fmt.Println("Requesting file: ", fullPath)
+		fileStat, err := os.Stat(fullPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				//return 404 if file does not exist, 
+				status = HTTPStatus[404]
+			}else{
+				status = HTTPStatus[400]
+			}
 		}else{
 			//else return file content
+			
 			contentType = "application/octet-stream"
-			contentLength = 100
-			// body = fileName
+			contentLength = fileStat.Size()
+			var err error
+			body, err = os.ReadFile(fullPath)
+			if err != nil{
+				fmt.Printf("Failed to read file %s. Error: %s", fullPath, err.Error())
+				status = HTTPStatus[500]
+			}
 		}
 		
 		
 		
 	}else if strings.EqualFold(req.Path, "/user-agent"){
 		if uagent, exists := req.Headers["User-Agent"]; exists && len(uagent) > 0{
-			contentLength = len(uagent[0])
-			body = uagent[0]			
+			contentLength = int64(len(uagent[0]))
+			body = []byte(uagent[0])
 		}
 	}else{
 		status = HTTPStatus[404]
@@ -84,16 +103,21 @@ func handleConnection(conn net.Conn) {
 	rsp  := fmt.Sprintf(
 		"HTTP/1.1 %s\r\n" +
 		"Content-Type: %s\r\n" +
-		"Content-Length: %d\r\n\r\n" +
-		"%s", status, contentType, contentLength,body,
+		"Content-Length: %d\r\n\r\n", status, contentType, contentLength,
 	)	
 	fmt.Println("<==")
 	fmt.Println(rsp)
 	_, err = conn.Write([]byte(rsp))
 	if err != nil{
-		fmt.Printf("Error reading headers from client request %s", err.Error())
+		fmt.Printf("Error sending rsp headers to client %s", err.Error())
 		return
 	}	
+	fmt.Println(string(body))
+	_, err = conn.Write(body)
+	if err != nil{
+		fmt.Printf("Error sending rsp body to client %s", err.Error())
+		return
+	}		
 }
 
 
@@ -101,11 +125,12 @@ func clean(input []byte)string{
 	output := string(input[:max(len(input)-2, 0)])
 	return output
 }
-var RootPath = "/"
+var RootDir *string
 var HTTPStatus = map[int]string{
     200:  "200 OK",
     404: "404 Not Found",
 	400: "400 Bad Request",
+	500: "500 Internal Server Error",
 }
 type Request struct{
 	Headers map[string][]string
@@ -116,13 +141,7 @@ type Request struct{
 }
 
 func NewRequest(conn net.Conn) (*Request, error) {
-    argsWithProg := os.Args
-    argsWithoutProg := os.Args[1:]
-	
-    arg := os.Args[3]
-    fmt.Println(argsWithProg)
-    fmt.Println(argsWithoutProg)
-    fmt.Println(arg)	
+
 	reader := bufio.NewReader(conn)	
 	r := &Request{
 		Headers: make(map[string][]string),
