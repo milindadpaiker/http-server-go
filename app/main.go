@@ -66,30 +66,35 @@ func handleConnection(conn net.Conn) {
 		fileReq := strings.SplitN(req.Path, "/", 3)
 		fileName := fileReq[2]
 		fullPath := filepath.Join(*RootDir, fileName)
-		fmt.Println("Requesting file: ", fullPath)
-		fileStat, err := os.Stat(fullPath)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				//return 404 if file does not exist, 
-				status = HTTPStatus[404]
+		if req.Method == "GET" {
+			fileStat, err := os.Stat(fullPath)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					//return 404 if file does not exist, 
+					status = HTTPStatus[404]
+				}else{
+					status = HTTPStatus[400]
+				}
 			}else{
-				status = HTTPStatus[400]
+				//else return file content
+				
+				contentType = "application/octet-stream"
+				contentLength = fileStat.Size()
+				var err error
+				body, err = os.ReadFile(fullPath)
+				if err != nil{
+					fmt.Printf("Failed to read file %s. Error: %s", fullPath, err.Error())
+					status = HTTPStatus[500]
+				}
 			}
-		}else{
-			//else return file content
-			
-			contentType = "application/octet-stream"
-			contentLength = fileStat.Size()
-			var err error
-			body, err = os.ReadFile(fullPath)
+		}else if req.Method == "POST" {
+			status = HTTPStatus[201]
+			err := os.WriteFile(fullPath, req.Body, 0644)
 			if err != nil{
-				fmt.Printf("Failed to read file %s. Error: %s", fullPath, err.Error())
+				fmt.Printf("Failed to write file %s. Error: %s", fullPath, err.Error())
 				status = HTTPStatus[500]
-			}
-		}
-		
-		
-		
+			}			
+		}	
 	}else if strings.EqualFold(req.Path, "/user-agent"){
 		if uagent, exists := req.Headers["User-Agent"]; exists && len(uagent) > 0{
 			contentLength = int64(len(uagent[0]))
@@ -128,6 +133,7 @@ func clean(input []byte)string{
 var RootDir *string
 var HTTPStatus = map[int]string{
     200:  "200 OK",
+	201 : "201 Created",
     404: "404 Not Found",
 	400: "400 Bad Request",
 	500: "500 Internal Server Error",
