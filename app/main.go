@@ -55,6 +55,22 @@ func handleConnection(conn net.Conn) {
 		echoResponse := strings.SplitN(req.Path, "/", 3)
 		contentLength = len(echoResponse[2])
 		body = echoResponse[2]
+	}else if strings.HasPrefix(req.Path, "/files/"){
+		fileReq := strings.SplitN(req.Path, "/", 3)
+		fileName := len(fileReq[2])
+		fmt.Println("Requesting file: ", fileName)
+		//return 404 if file does not exist, 
+		if true {
+
+		}else{
+			//else return file content
+			contentType = "application/octet-stream"
+			contentLength = 100
+			// body = fileName
+		}
+		
+		
+		
 	}else if strings.EqualFold(req.Path, "/user-agent"){
 		if uagent, exists := req.Headers["User-Agent"]; exists && len(uagent) > 0{
 			contentLength = len(uagent[0])
@@ -85,7 +101,7 @@ func clean(input []byte)string{
 	output := string(input[:max(len(input)-2, 0)])
 	return output
 }
-
+var RootPath = "/"
 var HTTPStatus = map[int]string{
     200:  "200 OK",
     404: "404 Not Found",
@@ -100,7 +116,13 @@ type Request struct{
 }
 
 func NewRequest(conn net.Conn) (*Request, error) {
-
+    argsWithProg := os.Args
+    argsWithoutProg := os.Args[1:]
+	
+    arg := os.Args[3]
+    fmt.Println(argsWithProg)
+    fmt.Println(argsWithoutProg)
+    fmt.Println(arg)	
 	reader := bufio.NewReader(conn)	
 	r := &Request{
 		Headers: make(map[string][]string),
