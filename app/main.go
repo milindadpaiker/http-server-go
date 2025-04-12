@@ -114,9 +114,20 @@ func handleConnection(conn net.Conn) {
 	rsp := ""
 	if strings.EqualFold(path, "/"){
 		rsp  = "HTTP/1.1 200 OK\r\n\r\n"
+	}else if strings.HasPrefix(path, "/echo/"){
+		op := strings.SplitN(path, "/", 3)
+		rsp  = fmt.Sprintf(
+		"HTTP/1.1 200 OK" +
+		"\r\n" +
+		"Content-Type: text/plain\r\n" +
+		"Content-Length: %d\r\n\r\n" +
+		"%s", len(op[2]), op[2],
+	)
 	}else{
-		rsp  = "HTTP/1.1 404 Not Found\r\n\r\n"
+			rsp  = "HTTP/1.1 404 Not Found\r\n\r\n"
 	}
+	
+
 	_, err = conn.Write([]byte(rsp))
 	if err != nil{
 		fmt.Errorf("Error reading headers from client request %s", err.Error())
