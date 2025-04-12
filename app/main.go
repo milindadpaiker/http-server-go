@@ -123,6 +123,17 @@ func handleConnection(conn net.Conn) {
 		"Content-Length: %d\r\n\r\n" +
 		"%s", len(op[2]), op[2],
 	)
+	}else if strings.EqualFold(path, "/user-agent"){
+		if v, exists := headers["User-Agent"]; exists && len(v) > 0{
+			rsp  = fmt.Sprintf(
+				"HTTP/1.1 200 OK" +
+				"\r\n" +
+				"Content-Type: text/plain\r\n" +
+				"Content-Length: %d\r\n\r\n" +
+				"%s", len(v[0]), v[0],
+			)
+		}
+
 	}else{
 			rsp  = "HTTP/1.1 404 Not Found\r\n\r\n"
 	}
