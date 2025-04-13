@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"flag"
 	"fmt"
@@ -41,91 +42,6 @@ func main() {
 
 }
 
-func handleConnection(conn net.Conn) {
-	status := "200 OK"
-	var contentLength int64
-	contentType := "text/plain"
-	var body []byte
-	defer conn.Close()
-	
-	//Read client request
-	req, err := NewRequest(conn)
-	if err != nil{
-		status = HTTPStatus[400]
-	}
-	
-	
-	//Path based routing and response handling
- 	if strings.EqualFold(req.Path, "/"){
-		status = HTTPStatus[200]
-	}else if strings.HasPrefix(req.Path, "/echo/"){
-		echoResponse := strings.SplitN(req.Path, "/", 3)
-		contentLength = int64(len(echoResponse[2]))
-		body = []byte(echoResponse[2])
-	}else if strings.HasPrefix(req.Path, "/files/"){
-		fileReq := strings.SplitN(req.Path, "/", 3)
-		fileName := fileReq[2]
-		fullPath := filepath.Join(*RootDir, fileName)
-		if req.Method == "GET" {
-			fileStat, err := os.Stat(fullPath)
-			if err != nil {
-				if errors.Is(err, os.ErrNotExist) {
-					//return 404 if file does not exist, 
-					status = HTTPStatus[404]
-				}else{
-					status = HTTPStatus[400]
-				}
-			}else{
-				//else return file content
-				
-				contentType = "application/octet-stream"
-				contentLength = fileStat.Size()
-				var err error
-				body, err = os.ReadFile(fullPath)
-				if err != nil{
-					fmt.Printf("Failed to read file %s. Error: %s", fullPath, err.Error())
-					status = HTTPStatus[500]
-				}
-			}
-		}else if req.Method == "POST" {
-			status = HTTPStatus[201]
-			err := os.WriteFile(fullPath, req.Body, 0644)
-			if err != nil{
-				fmt.Printf("Failed to write file %s. Error: %s", fullPath, err.Error())
-				status = HTTPStatus[500]
-			}			
-		}	
-	}else if strings.EqualFold(req.Path, "/user-agent"){
-		if uagent, exists := req.Headers["User-Agent"]; exists && len(uagent) > 0{
-			contentLength = int64(len(uagent[0]))
-			body = []byte(uagent[0])
-		}
-	}else{
-		status = HTTPStatus[404]
-	}
-
-	//send response
-	rsp  := fmt.Sprintf(
-		"HTTP/1.1 %s\r\n" +
-		"Content-Type: %s\r\n" +
-		"Content-Length: %d\r\n\r\n", status, contentType, contentLength,
-	)	
-	fmt.Println("<==")
-	fmt.Println(rsp)
-	_, err = conn.Write([]byte(rsp))
-	if err != nil{
-		fmt.Printf("Error sending rsp headers to client %s", err.Error())
-		return
-	}	
-	fmt.Println(string(body))
-	_, err = conn.Write(body)
-	if err != nil{
-		fmt.Printf("Error sending rsp body to client %s", err.Error())
-		return
-	}		
-}
-
-
 func clean(input []byte)string{
 	output := string(input[:max(len(input)-2, 0)])
 	return output
@@ -145,6 +61,138 @@ type Request struct{
 	Protocol string
 	Body []byte
 }
+
+type Response struct{
+	Headers map[string][]string
+	Body []byte
+	Status string
+}
+
+func (r * Response) CompressBody([]byte) []byte{
+return nil
+}
+
+func handleConnection(conn net.Conn) {
+	
+	// var contentLength int64
+	contentType := "text/plain"
+	// var body []byte
+	defer conn.Close()
+	fmt.Println(conn.RemoteAddr().String())
+	rsp := &Response{
+		Headers: make(map[string][]string),
+		Body : nil,
+		Status : "200 OK",
+	}	
+	//Read client request
+	req, err := NewRequest(conn)
+	if err != nil{
+		rsp.Status = HTTPStatus[400]
+	}
+
+	
+	//Path based routing and response handling
+ 	if strings.EqualFold(req.Path, "/"){
+		rsp.Status = HTTPStatus[200]
+	}else if strings.HasPrefix(req.Path, "/echo/"){
+		echoResponse := strings.SplitN(req.Path, "/", 3)
+		// contentLength = int64(len(echoResponse[2]))
+		rsp.Body = []byte(echoResponse[2])
+	}else if strings.HasPrefix(req.Path, "/files/"){
+		fileReq := strings.SplitN(req.Path, "/", 3)
+		fileName := fileReq[2]
+		fullPath := filepath.Join(*RootDir, fileName)
+		if req.Method == "GET" {
+			_, err := os.Stat(fullPath)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					//return 404 if file does not exist, 
+					rsp.Status= HTTPStatus[404]
+				}else{
+					rsp.Status = HTTPStatus[400]
+				}
+			}else{
+				//else return file content
+				
+				contentType = "application/octet-stream"
+				var err error
+				rsp.Body, err = os.ReadFile(fullPath)
+				if err != nil{
+					fmt.Printf("Failed to read file %s. Error: %s", fullPath, err.Error())
+					rsp.Status = HTTPStatus[500]
+				}
+			}
+		}else if req.Method == "POST" {
+			rsp.Status = HTTPStatus[201]
+			err := os.WriteFile(fullPath, req.Body, 0644)
+			if err != nil{
+				fmt.Printf("Failed to write file %s. Error: %s", fullPath, err.Error())
+				rsp.Status = HTTPStatus[500]
+			}			
+		}	
+	}else if strings.EqualFold(req.Path, "/user-agent"){
+		if uagent, exists := req.Headers["User-Agent"]; exists && len(uagent) > 0{
+			// contentLength = int64(len(uagent[0]))
+			rsp.Body = []byte(uagent[0])
+		}
+	}else{
+		rsp.Status = HTTPStatus[404]
+	}
+	//compress response body if gzip is one of the supported client comporession for this request
+	//update body, contentLength and Content-Encoding accordingly
+	var buf bytes.Buffer
+	gzipWriter := gzip.NewWriter(&buf)
+	if 	cmp, exists := req.Headers["Accept-Encoding"]; exists{
+		for _, val := range cmp{
+			
+			if strings.TrimSpace(val) == "gzip"{
+				if _, err := gzipWriter.Write(rsp.Body); err != nil{
+					fmt.Println("Error writing to gzip writer:", err)
+					rsp.Status = HTTPStatus[500]
+					break
+				}
+			
+			if err := gzipWriter.Close(); err != nil {
+				fmt.Println("Error closing gzip writer:", err)
+				break
+			}		
+			rsp.Body = buf.Bytes()	
+			rsp.Headers["Content-Encoding"] = []string{"gzip"}
+			break
+			}	
+		}
+	}		
+	//send response
+	r1  := fmt.Sprintf(
+		"HTTP/1.1 %s\r\n" +
+		"Content-Type: %s\r\n" +
+		"Content-Length: %d\r\n", rsp.Status, contentType, len(rsp.Body),
+	)
+	
+	for k , values := range rsp.Headers{
+		r1 += k + ": " + strings.Join(values, ",") +  "\r\n"
+	}
+	r1 += "\r\n" 
+	fmt.Println("<==")
+	fmt.Println(r1)
+
+	_, err = conn.Write([]byte(r1))
+	if err != nil{
+		fmt.Printf("Error sending rsp headers to client %s", err.Error())
+		return
+	}	
+	fmt.Println(string(rsp.Body))
+
+
+	_, err = conn.Write(rsp.Body)
+	if err != nil{
+		fmt.Printf("Error sending rsp body to client %s", err.Error())
+		return
+	}		
+}
+
+
+
 
 func NewRequest(conn net.Conn) (*Request, error) {
 
