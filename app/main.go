@@ -101,63 +101,22 @@ func handleConnection(conn net.Conn) {
 				return // Client closed connection
 			}
 			rsp.Status = HTTPStatus[400]
+			err = sendResponse(rsp, conn)
+			if err != nil {
+				fmt.Println("Error sending response:", err)
+				return
+			}
 		}
 
-		//Path based routing and response handling
-		if strings.EqualFold(req.Path, "/") {
-			rsp.Status = HTTPStatus[200]
-		} else if strings.HasPrefix(req.Path, "/echo/") {
-			// time.Sleep(10 * time.Second)
-			echoResponse := strings.SplitN(req.Path, "/", 3)
-			// contentLength = int64(len(echoResponse[2]))
-			rsp.Body = []byte(echoResponse[2])
-		} else if strings.HasPrefix(req.Path, "/files/") {
-			fileReq := strings.SplitN(req.Path, "/", 3)
-			fileName := fileReq[2]
-			fullPath := filepath.Join(*RootDir, fileName)
-			if req.Method == "GET" {
-				_, err := os.Stat(fullPath)
-				if err != nil {
-					if errors.Is(err, os.ErrNotExist) {
-						//return 404 if file does not exist,
-						rsp.Status = HTTPStatus[404]
-					} else {
-						rsp.Status = HTTPStatus[400]
-					}
-				} else {
-					//else return file content
-
-					rsp.Headers["Content-Type"] = []string{"application/octet-stream"}
-					var err error
-					rsp.Body, err = os.ReadFile(fullPath)
-					if err != nil {
-						fmt.Printf("Failed to read file %s. Error: %s", fullPath, err.Error())
-						rsp.Status = HTTPStatus[500]
-					}
-				}
-			} else if req.Method == "POST" {
-				rsp.Status = HTTPStatus[201]
-				err := os.WriteFile(fullPath, req.Body, 0644)
-				if err != nil {
-					fmt.Printf("Failed to write file %s. Error: %s", fullPath, err.Error())
-					rsp.Status = HTTPStatus[500]
-				}
-			}
-		} else if strings.EqualFold(req.Path, "/user-agent") {
-			if uagent, exists := req.Headers["User-Agent"]; exists && len(uagent) > 0 {
-				// contentLength = int64(len(uagent[0]))
-				rsp.Body = []byte(uagent[0])
-			}
-		} else {
-			rsp.Status = HTTPStatus[404]
-		}
-		//compress response body if gzip is one of the supported client comporession for this request
-		//update body, contentLength and Content-Encoding accordingly
-
+		processRequest(req, rsp)
 		handleCompression(req, rsp)
 		err = sendResponse(rsp, conn)
 		if err != nil {
 			fmt.Println("Error sending response:", err)
+			return
+		}
+		if shouldClose(req) {
+			fmt.Println("Closing...")
 			return
 		}
 
@@ -165,6 +124,68 @@ func handleConnection(conn net.Conn) {
 
 }
 
+func processRequest(req *Request, rsp *Response) {
+	//Path based routing and response handling
+	if strings.EqualFold(req.Path, "/") {
+		rsp.Status = HTTPStatus[200]
+	} else if strings.HasPrefix(req.Path, "/echo/") {
+		// time.Sleep(10 * time.Second)
+		echoResponse := strings.SplitN(req.Path, "/", 3)
+		// contentLength = int64(len(echoResponse[2]))
+		rsp.Body = []byte(echoResponse[2])
+	} else if strings.HasPrefix(req.Path, "/files/") {
+		fileReq := strings.SplitN(req.Path, "/", 3)
+		fileName := fileReq[2]
+		fullPath := filepath.Join(*RootDir, fileName)
+		if req.Method == "GET" {
+			_, err := os.Stat(fullPath)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					//return 404 if file does not exist,
+					rsp.Status = HTTPStatus[404]
+				} else {
+					rsp.Status = HTTPStatus[400]
+				}
+			} else {
+				//else return file content
+
+				rsp.Headers["Content-Type"] = []string{"application/octet-stream"}
+				var err error
+				rsp.Body, err = os.ReadFile(fullPath)
+				if err != nil {
+					fmt.Printf("Failed to read file %s. Error: %s", fullPath, err.Error())
+					rsp.Status = HTTPStatus[500]
+				}
+			}
+		} else if req.Method == "POST" {
+			rsp.Status = HTTPStatus[201]
+			err := os.WriteFile(fullPath, req.Body, 0644)
+			if err != nil {
+				fmt.Printf("Failed to write file %s. Error: %s", fullPath, err.Error())
+				rsp.Status = HTTPStatus[500]
+			}
+		}
+	} else if strings.EqualFold(req.Path, "/user-agent") {
+		if uagent, exists := req.Headers["User-Agent"]; exists && len(uagent) > 0 {
+			// contentLength = int64(len(uagent[0]))
+			rsp.Body = []byte(uagent[0])
+		}
+	} else {
+		rsp.Status = HTTPStatus[404]
+	}
+	if shouldClose(req) {
+		rsp.Headers["Connection"] = []string{"close"}
+	} else {
+		rsp.Headers["Connection"] = []string{"keep-alive"}
+	}
+}
+
+func shouldClose(req *Request) bool {
+	if value, exists := req.Headers["Connection"]; exists {
+		return strings.EqualFold(value[0], "Close")
+	}
+	return false
+}
 func handleCompression(req *Request, rsp *Response) {
 	var buf bytes.Buffer
 	gzipWriter := gzip.NewWriter(&buf)
